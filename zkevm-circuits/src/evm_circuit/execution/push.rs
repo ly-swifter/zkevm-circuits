@@ -8,7 +8,8 @@ use crate::{
                 ConstrainBuilderCommon, EVMConstraintBuilder, StepStateTransition,
                 Transition::Delta,
             },
-            sum, CachedRegion, Cell,
+            math_gadget::IsZeroGadget,
+            select, sum, CachedRegion, Cell,
         },
         witness::{Block, Call, ExecStep, Transaction},
     },
@@ -18,14 +19,15 @@ use crate::{
     },
 };
 use array_init::array_init;
-use eth_types::{evm_types::OpcodeId, Field};
+use eth_types::{evm_types::OpcodeId, Field, U256};
 use halo2_proofs::{circuit::Value, plonk::Error};
 
 #[derive(Clone, Debug)]
 pub(crate) struct PushGadget<F> {
     same_context: SameContextGadget<F>,
+    is_push0: IsZeroGadget<F>,
     value: Word32Cell<F>,
-    selectors: [Cell<F>; 31],
+    selectors: [Cell<F>; 32],
 }
 
 impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
@@ -35,8 +37,16 @@ impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
 
     fn configure(cb: &mut EVMConstraintBuilder<F>) -> Self {
         let opcode = cb.query_cell();
+        let is_push0 = IsZeroGadget::construct(cb, opcode.expr() - OpcodeId::PUSH0.expr());
 
         let value = cb.query_word32();
+        cb.stack_push(value.to_word());
+
+        cb.require_zero(
+            "Stack write value must be zero for PUSH0",
+            is_push0.expr() * sum::expr(&value.limbs),
+        );
+
         // Query selectors for each opcode_lookup
         let selectors = array_init(|_| cb.query_bool());
 
@@ -53,21 +63,16 @@ impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
         //                           ▼                     ▼
         //   [byte31,     ...,     byte2,     byte1,     byte0]
         //
-        for idx in 0..32 {
+        for (idx, sel) in selectors.iter().enumerate() {
             let byte = &value.limbs[idx];
             let index = cb.curr.state.program_counter.expr() + opcode.expr()
-                - (OpcodeId::PUSH1.as_u8() - 1 + idx as u8).expr();
-            if idx == 0 {
-                cb.opcode_lookup_at(index, byte.expr(), 0.expr())
-            } else {
-                cb.condition(selectors[idx - 1].expr(), |cb| {
-                    cb.opcode_lookup_at(index, byte.expr(), 0.expr())
-                });
-            }
-        }
+                - (OpcodeId::PUSH0.as_u8() + idx as u8).expr();
 
-        for idx in 0..31 {
-            let selector_prev = if idx == 0 {
+            cb.condition(sel.expr(), |cb| {
+                cb.opcode_lookup_at(index, byte.expr(), 0.expr())
+            });
+
+            let sel_prev = if idx == 0 {
                 // First selector will always be 1
                 1.expr()
             } else {
@@ -77,18 +82,18 @@ impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
             // 0, 0, 0]
             cb.require_boolean(
                 "Constrain selector can only transit from 1 to 0",
-                selector_prev - selectors[idx].expr(),
+                sel_prev - sel.expr(),
             );
             // byte should be 0 when selector is 0
             cb.require_zero(
                 "Constrain byte == 0 when selector == 0",
-                value.limbs[idx + 1].expr() * (1.expr() - selectors[idx].expr()),
+                value.limbs[idx].expr() * (1.expr() - sel.expr()),
             );
         }
 
-        // Deduce the number of additional bytes to push than PUSH1. Note that
-        // num_additional_pushed = n - 1 where n is the suffix number of PUSH*.
-        let num_additional_pushed = opcode.expr() - OpcodeId::PUSH1.as_u64().expr();
+        // Deduce the number of additional bytes to push than PUSH0. Note that
+        // num_additional_pushed = n where n is the suffix number of PUSH*.
+        let num_additional_pushed = opcode.expr() - OpcodeId::PUSH0.as_u64().expr();
         // Sum of selectors needs to be exactly the number of additional bytes
         // that needs to be pushed.
         cb.require_equal(
@@ -97,22 +102,23 @@ impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
             num_additional_pushed,
         );
 
-        // Push the value on the stack
-        cb.stack_push(value.to_word());
-
         // State transition
-        // `program_counter` needs to be increased by number of bytes pushed + 1
         let step_state_transition = StepStateTransition {
             rw_counter: Delta(1.expr()),
-            program_counter: Delta(opcode.expr() - (OpcodeId::PUSH1.as_u64() - 2).expr()),
+            program_counter: Delta(opcode.expr() - (OpcodeId::PUSH0.as_u64() - 1).expr()),
             stack_pointer: Delta((-1).expr()),
-            gas_left: Delta(-OpcodeId::PUSH1.constant_gas_cost().expr()),
+            gas_left: Delta(select::expr(
+                is_push0.expr(),
+                -OpcodeId::PUSH0.constant_gas_cost().expr(),
+                -OpcodeId::PUSH1.constant_gas_cost().expr(),
+            )),
             ..Default::default()
         };
         let same_context = SameContextGadget::construct(cb, opcode, step_state_transition);
 
         Self {
             same_context,
+            is_push0,
             value,
             selectors,
         }
@@ -130,11 +136,20 @@ impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
         self.same_context.assign_exec_step(region, offset, step)?;
 
         let opcode = step.opcode().unwrap();
+        self.is_push0.assign(
+            region,
+            offset,
+            F::from(opcode.as_u64()) - F::from(OpcodeId::PUSH0.as_u64()),
+        )?;
 
-        let value = block.get_rws(step, 0).stack_value();
+        let value = if opcode.is_push_with_data() {
+            block.get_rws(step, 0).stack_value()
+        } else {
+            U256::zero()
+        };
         self.value.assign_u256(region, offset, value)?;
 
-        let num_additional_pushed = opcode.postfix().expect("opcode with postfix") - 1;
+        let num_additional_pushed = opcode.postfix().expect("opcode with postfix");
         for (idx, selector) in self.selectors.iter().enumerate() {
             selector.assign(
                 region,
@@ -172,6 +187,7 @@ mod test {
 
     #[test]
     fn push_gadget_simple() {
+        test_ok(OpcodeId::PUSH0, &[]);
         test_ok(OpcodeId::PUSH1, &[1]);
         test_ok(OpcodeId::PUSH2, &[1, 2]);
         test_ok(
