@@ -77,12 +77,12 @@ impl<F: Field> SubCircuitConfig<F> for EccCircuitConfig<F> {
         let fp_config = FpConfig::configure(
             meta,
             FpStrategy::Simple,
-            &[15, 1], // num advice
-            &[17],    // num lookup advice
-            1,        // num fixed
-            13,       // lookup bits
-            88,       // limb bits
-            3,        // num limbs
+            &[5, 1], // num advice
+            &[17],   // num lookup advice
+            1,       // num fixed
+            13,      // lookup bits
+            88,      // limb bits
+            3,       // num limbs
             modulus::<Fq>(),
             0,
             LOG_TOTAL_NUM_ROWS as usize, // k
@@ -217,6 +217,8 @@ impl<F: Field> EccCircuit<F> {
                                         * P == Q */
                             )
                         };
+                        log::info!("point r     = {:?}", point_r.decomposed.ec_point);
+                        log::info!("point r got = {:?}", point_r_got);
                         fp_chip.assert_equal(&mut ctx, &point_r.decomposed.ec_point, &point_r_got);
                         EcAddAssigned {
                             point_p,

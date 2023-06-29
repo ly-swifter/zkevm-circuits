@@ -2,7 +2,7 @@ use eth_types::Field;
 use halo2_base::{AssignedValue, QuantumCell};
 use halo2_ecc::{bigint::CRTInteger, ecc::EcPoint, fields::FieldExtPoint};
 
-pub const LOG_TOTAL_NUM_ROWS: u32 = 20;
+pub const LOG_TOTAL_NUM_ROWS: u32 = 15;
 
 pub struct G1Decomposed<F: Field> {
     pub ec_point: EcPoint<F, CRTInteger<F>>,

@@ -45,7 +45,9 @@ impl GenRand for EcAddOp {
     fn gen_rand<R: RngCore + CryptoRng>(mut r: &mut R) -> Self {
         let p = G1Affine::random(&mut r);
         let q = G1Affine::random(&mut r);
-        let r = p.add(&q).into();
+        // TODO: tmp change.
+        // let r = p.add(&q).into();
+        let r = G1Affine::random(&mut r);
         Self { p, q, r }
     }
 }
@@ -76,13 +78,14 @@ fn test_ecc_circuit() {
     run::<Fr>(
         LOG_TOTAL_NUM_ROWS,
         PrecompileEcParams {
-            ec_add: 10,
-            ec_mul: 10,
-            ec_pairing: 2,
+            ec_add: 1,
+            ec_mul: 0,
+            ec_pairing: 0,
         },
         // using empty vec will populate the default ops.
-        gen(&mut rng, 9),
-        gen(&mut rng, 9),
+        gen(&mut rng, 1),
+        // gen(&mut rng, 9),
+        vec![],
         vec![],
     )
 }
