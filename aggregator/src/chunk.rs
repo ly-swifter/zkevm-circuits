@@ -3,6 +3,9 @@
 use eth_types::H256;
 use ethers_core::utils::keccak256;
 
+/// Implements a dummy circuit for the chunk
+pub(crate) mod dummy_chunk_circuit;
+
 #[derive(Default, Debug, Clone, Copy)]
 /// A chunk is a set of continuous blocks.
 /// A ChunkHash consists of 4 hashes, representing the changes incurred by this chunk of blocks:
@@ -26,7 +29,7 @@ pub struct ChunkHash {
 impl ChunkHash {
     /// Sample a chunk hash from random (for testing)
     #[cfg(test)]
-    pub(crate) fn mock_chunk_hash<R: rand::RngCore>(r: &mut R) -> Self {
+    pub(crate) fn mock_random_chunk_hash_for_testing<R: rand::RngCore>(r: &mut R) -> Self {
         let mut prev_state_root = [0u8; 32];
         r.fill_bytes(&mut prev_state_root);
         let mut post_state_root = [0u8; 32];
@@ -41,6 +44,28 @@ impl ChunkHash {
             post_state_root: post_state_root.into(),
             withdraw_root: withdraw_root.into(),
             data_hash: data_hash.into(),
+        }
+    }
+
+    /// Build a dummy chunk from a real chunk.
+    /// The dummy chunk will act as a consecutive chunk of the real chunk
+    pub(crate) fn dummy_chunk_hash(previous_chunk: &Self) -> Self {
+        Self {
+            chain_id: previous_chunk.chain_id,
+            prev_state_root: previous_chunk.post_state_root,
+            post_state_root: previous_chunk.post_state_root,
+            withdraw_root: previous_chunk.withdraw_root,
+            data_hash: [0u8; 32].into(),
+        }
+    }
+
+    /// A ChunkHash is dummy if its pre_state_root matches its post_state_root
+    /// and its data_hash is all 0s.
+    pub(crate) fn is_dummy(&self) -> bool {
+        if self.prev_state_root != self.post_state_root || self.data_hash != [0u8; 32].into() {
+            false
+        } else {
+            true
         }
     }
 
