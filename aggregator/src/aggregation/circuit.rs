@@ -243,6 +243,9 @@ impl Circuit<Fr> for AggregationCircuit {
                 Ok(())
             },
         )?;
+
+        assert_eq!(snark_inputs.len(), MAX_AGG_SNARKS * DIGEST_LEN);
+
         end_timer!(timer);
         // ==============================================
         // step 2: public input aggregation circuit
@@ -293,6 +296,14 @@ impl Circuit<Fr> for AggregationCircuit {
                 for i in 0..MAX_AGG_SNARKS {
                     for j in 0..4 {
                         for k in 0..8 {
+                            let mut t1 = Fr::default();
+                            let mut t2 = Fr::default();
+                            chunk_pi_hash_digests[i][j * 8 + k].value().map(|x| t1 = *x);
+                            snark_inputs[i * DIGEST_LEN + (3 - j) * 8 + k]
+                                .value()
+                                .map(|x| t2 = *x);
+                            assert_eq!(t1, t2);
+
                             region.constrain_equal(
                                 chunk_pi_hash_digests[i][j * 8 + k].cell(),
                                 snark_inputs[i * DIGEST_LEN + (3 - j) * 8 + k].cell(),
