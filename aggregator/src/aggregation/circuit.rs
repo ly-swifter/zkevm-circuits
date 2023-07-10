@@ -32,6 +32,7 @@ use crate::{
     batch::BatchHash,
     constants::{ACC_LEN, BITS, DIGEST_LEN, LIMBS, MAX_AGG_SNARKS},
     core::{assign_batch_hashes, chunk_is_valid, extract_accumulators_and_proof},
+    util::parse_hash_preimage_cells,
     ConfigParams,
 };
 
@@ -131,6 +132,10 @@ impl AggregationCircuit {
             batch_hash,
         }
     }
+
+    pub fn as_proof(&self) -> Value<&[u8]> {
+        self.as_proof.as_ref().map(Vec::as_slice)
+    }
 }
 
 impl Circuit<Fr> for AggregationCircuit {
@@ -166,11 +171,79 @@ impl Circuit<Fr> for AggregationCircuit {
             .load_lookup_table(&mut layouter)
             .expect("load range lookup table");
 
-        // let chunk_is_valid = chunk_is_valid(
-        //     &config.flex_gate(),
-        //     &mut layouter,
-        //     self.batch_hash.number_of_valid_chunks,
-        // );
+        let mut first_pass = halo2_base::SKIP_FIRST_PASS;
+        // ==============================================
+        // Step 1: snark aggregation circuit
+        // ==============================================
+        // stores accumulators for all snarks, including the padded ones
+        let mut accumulator_instances: Vec<AssignedValue<Fr>> = vec![];
+        // stores public inputs for all snarks, including the padded ones
+        let mut snark_inputs: Vec<AssignedValue<Fr>> = vec![];
+
+        layouter.assign_region(
+            || "aggregation",
+            |region| {
+                if first_pass {
+                    first_pass = false;
+                    return Ok(());
+                }
+                let ctx = Context::new(
+                    region,
+                    ContextParams {
+                        max_rows: config.flex_gate().max_rows,
+                        num_context_ids: 1,
+                        fixed_columns: config.flex_gate().constants.clone(),
+                    },
+                );
+
+                let ecc_chip = config.ecc_chip();
+                let loader = Halo2Loader::new(ecc_chip, ctx);
+
+                //
+                // extract the assigned values for
+                // - instances which are the public inputs of each chunk (prefixed with 12 instances
+                //   from previous accumulators)
+                // - new accumulator to be verified on chain
+                //
+                let (assigned_aggregation_instances, acc) = aggregate::<Kzg<Bn256, Bdfg21>>(
+                    &self.svk,
+                    &loader,
+                    &self.snarks_with_padding,
+                    self.as_proof(),
+                );
+                log::trace!("aggregation circuit during assigning");
+                for (i, e) in assigned_aggregation_instances[0].iter().enumerate() {
+                    log::trace!("{}-th instance: {:?}", i, e.value)
+                }
+
+                // extract the following cells for later constraints
+                // - the accumulators
+                // - the public inputs from each snark
+                accumulator_instances.extend(flatten_accumulator(acc).iter().copied());
+                // the snark is not a fresh one, assigned_instances already contains an
+                // accumulator so we want to skip the first 12 elements from the public input
+                snark_inputs.extend(
+                    assigned_aggregation_instances
+                        .iter()
+                        .flat_map(|instance_column| instance_column.iter().skip(ACC_LEN)),
+                );
+
+                config.range().finalize(&mut loader.ctx_mut());
+
+                loader.ctx_mut().print_stats(&["Range"]);
+
+                Ok(())
+            },
+        )?;
+
+        log::trace!("instance outside aggregation function");
+        for (i, e) in snark_inputs.iter().enumerate() {
+            log::trace!("{}-th instance: {:?}", i, e.value)
+        }
+        // assert the accumulator in aggregation instance matches public input
+        for (i, v) in accumulator_instances.iter().enumerate() {
+            layouter.constrain_instance(v.cell(), config.instance, i)?;
+        }
 
         // ==============================================
         // step 2: public input aggregation circuit
@@ -198,7 +271,7 @@ impl Circuit<Fr> for AggregationCircuit {
         end_timer!(timer);
 
         let timer = start_timer!(|| ("assign cells").to_string());
-        let (hash_preimage_cells, hash_digest_cells) = assign_batch_hashes(
+        let hash_preimage_cells = assign_batch_hashes(
             &config,
             &mut layouter,
             challenges,
@@ -208,22 +281,23 @@ impl Circuit<Fr> for AggregationCircuit {
         .unwrap();
         end_timer!(timer);
 
-        // for i in 0..MAX_AGG_SNARKS + 2 {
-        //     println!("{}-th hash", i);
-        //     println!("preimage");
-        //     for (j, e) in hash_preimage_cells[i].iter().enumerate() {
-        //         println!("{} {:?}", j, e.value());
-        //     }
+        // ====================================================
+        // parse the hashes
+        // ====================================================
+        // preimages
+        let (batch_pi_hash_preimage, chunk_pi_hash_preimages, _potential_batch_data_hash_preimage) =
+            parse_hash_preimage_cells(&hash_preimage_cells);
 
-        //     println!("digest");
-        //     for (j, e) in hash_digest_cells[i].iter().enumerate() {
-        //         println!("{} {:?}", j, e.value());
-        //     }
+        for i in 0..MAX_AGG_SNARKS {
+            println!("{}-th hash", i);
+            println!("preimage");
+            for (j, e) in chunk_pi_hash_preimages[i].iter().enumerate() {
+                println!("{} {:?}", j, e.value());
+                println!("{:?}", snark_inputs[i * DIGEST_LEN + j]);
+            }
 
-        //     println!("===============\n");
-        // }
-
-        let mut first_pass = halo2_base::SKIP_FIRST_PASS;
+            println!("===============\n");
+        }
 
         end_timer!(witness_time);
         Ok(())

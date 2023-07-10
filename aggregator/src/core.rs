@@ -40,9 +40,8 @@ use crate::{
         CHAIN_ID_LEN, DIGEST_LEN, LOG_DEGREE, MAX_AGG_SNARKS, MAX_KECCAK_ROUNDS, ROUND_LEN,
     },
     util::{
-        assert_conditional_equal, assert_conditional_not_equal, assert_equal, assert_exist,
-        assgined_cell_to_value, capacity, get_indices, is_smaller_than, parse_hash_digest_cells,
-        parse_hash_preimage_cells,
+        assert_conditional_equal, assert_equal, assert_exist, assgined_cell_to_value, capacity,
+        get_indices, is_smaller_than, parse_hash_digest_cells, parse_hash_preimage_cells,
     },
     AggregationConfig, CHUNK_DATA_HASH_INDEX, POST_STATE_ROOT_INDEX, PREV_STATE_ROOT_INDEX,
     WITHDRAW_ROOT_INDEX,
@@ -96,8 +95,10 @@ pub(crate) fn extract_accumulators_and_proof(
 
 /// Input the hash input bytes,
 /// assign the circuit for the hash function,
-/// return cells of the hash inputs and digests.
+/// return cells of the hash inputs
+//
 // This function asserts the following constraints on the hashes
+//
 // 1. batch_data_hash digest is reused for public input hash
 // 2. batch_pi_hash used same roots as chunk_pi_hash
 // 2.1. batch_pi_hash and chunk[0] use a same prev_state_root
@@ -108,20 +109,13 @@ pub(crate) fn extract_accumulators_and_proof(
 // 5. batch and all its chunks use a same chain id
 // 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
 // 7. chunk[i]'s data_hash == [0u8; 32] when chunk[i] is padded
-#[allow(clippy::type_complexity)]
 pub(crate) fn assign_batch_hashes(
     config: &AggregationConfig,
     layouter: &mut impl Layouter<Fr>,
     challenges: Challenges<Value<Fr>>,
     preimages: &[Vec<u8>],
     num_of_valid_chunks: usize,
-) -> Result<
-    (
-        Vec<AssignedCell<Fr, Fr>>, // input cells
-        Vec<AssignedCell<Fr, Fr>>, // digest cells
-    ),
-    Error,
-> {
+) -> Result<Vec<AssignedCell<Fr, Fr>>, Error> {
     let (hash_input_cells, hash_output_cells) = extract_hash_cells(
         &config.keccak_circuit_config,
         layouter,
@@ -137,7 +131,8 @@ pub(crate) fn assign_batch_hashes(
     copy_constraints(layouter, &hash_input_cells)?;
     // 1. batch_data_hash digest is reused for public input hash
     // 3. batch_data_hash and chunk[i].pi_hash use a same chunk[i].data_hash when chunk[i] is not
-    // padded 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
+    // padded
+    // 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
     // 7. chunk[i]'s data_hash == [0u8; 32] when chunk[i] is padded
     conditional_constraints(
         config.flex_gate(),
@@ -147,7 +142,7 @@ pub(crate) fn assign_batch_hashes(
         num_of_valid_chunks,
     )?;
 
-    Ok((hash_input_cells, hash_output_cells))
+    Ok(hash_input_cells)
 }
 
 pub(crate) fn extract_hash_cells(
@@ -266,7 +261,6 @@ fn copy_constraints(
                 // ====================================================
                 // parse the hashes
                 // ====================================================
-
                 // preimages
                 let (
                     batch_pi_hash_preimage,
@@ -275,10 +269,10 @@ fn copy_constraints(
                 ) = parse_hash_preimage_cells(&hash_input_cells);
 
                 // ====================================================
-                // Constraint the relations between hash preimages and digests
+                // Constraint the relations between hash preimages
                 // via copy constraints
                 // ====================================================
-
+                //
                 // 2 batch_pi_hash used same roots as chunk_pi_hash
                 //
                 // batch_pi_hash =
@@ -366,9 +360,7 @@ fn copy_constraints(
     Ok(())
 }
 
-/// Input the hash input bytes,
-/// assign the circuit for the hash function,
-/// return cells of the hash inputs and digests.
+// Assert the following constraints
 // This function asserts the following constraints on the hashes
 // 1. batch_data_hash digest is reused for public input hash
 // 3. batch_data_hash and chunk[i].pi_hash use a same chunk[i].data_hash when chunk[i] is not padded
@@ -385,7 +377,7 @@ pub(crate) fn conditional_constraints(
     let mut first_pass = halo2_base::SKIP_FIRST_PASS;
     layouter
         .assign_region(
-            || "additional checks",
+            || "conditional constraints",
             |region| {
                 if first_pass {
                     first_pass = false;
@@ -402,15 +394,14 @@ pub(crate) fn conditional_constraints(
 
                 let zero_cell = flex_gate.load_zero(&mut ctx);
                 let chunk_is_valid = chunk_is_valid(&flex_gate, &mut ctx, num_of_valid_chunks);
+                let chunk_is_pad = chunk_is_valid
+                    .iter()
+                    .map(|&cell| flex_gate.not(&mut ctx, QuantumCell::Existing(cell)))
+                    .collect::<Vec<_>>();
 
                 // ====================================================
                 // parse the hashes
                 // ====================================================
-
-                // sanity
-                assert_eq!(hash_input_cells.len(), MAX_KECCAK_ROUNDS * ROUND_LEN);
-                assert_eq!(hash_output_cells.len(), (MAX_AGG_SNARKS + 4) * DIGEST_LEN);
-
                 // preimages
                 let (
                     batch_pi_hash_preimage,
@@ -420,9 +411,9 @@ pub(crate) fn conditional_constraints(
 
                 // digests
                 let (
-                    batch_pi_hash_digest,
-                    chunk_pi_hash_digests,
-                    potential_batch_data_hash_digest
+                    _batch_pi_hash_digest,
+                    _chunk_pi_hash_digests,
+                    potential_batch_data_hash_digest,
                 ) = parse_hash_digest_cells(&hash_output_cells);
 
                 //
@@ -458,12 +449,12 @@ pub(crate) fn conditional_constraints(
                         let t3 = assgined_cell_to_value(
                             flex_gate,
                             &mut ctx,
-                            &potential_batch_data_hash_digest[(3 - i) * 8 + j + 32],
+                            &potential_batch_data_hash_digest[(3 - i) * 8 + j + DIGEST_LEN],
                         );
                         let t4 = assgined_cell_to_value(
                             flex_gate,
                             &mut ctx,
-                            &potential_batch_data_hash_digest[(3 - i) * 8 + j + 64],
+                            &potential_batch_data_hash_digest[(3 - i) * 8 + j + DIGEST_LEN * 2],
                         );
 
                         // assert (t1-t2)*(t1-t3)*(t1-t4)==0
@@ -501,7 +492,8 @@ pub(crate) fn conditional_constraints(
                     }
                 }
 
-                // 3 batch_data_hash and chunk[i].pi_hash use a same chunk[i].data_hash when chunk[i] is not padded
+                // 3 batch_data_hash and chunk[i].pi_hash use a same chunk[i].data_hash when
+                // chunk[i] is not padded
                 //
                 // batchDataHash = keccak(chunk[0].dataHash || ... || chunk[k-1].dataHash)
                 //
@@ -520,9 +512,6 @@ pub(crate) fn conditional_constraints(
                     .enumerate()
                 {
                     for (j, cell) in chunk.into_iter().enumerate() {
-
-
-
                         // convert halo2 proof's cells to halo2-lib's
                         let t1 = assgined_cell_to_value(flex_gate, &mut ctx, &cell);
                         let t2 = assgined_cell_to_value(
@@ -530,11 +519,7 @@ pub(crate) fn conditional_constraints(
                             &mut ctx,
                             &chunk_pi_hash_preimages[i][j + CHUNK_DATA_HASH_INDEX],
                         );
-                        assert_conditional_equal(
-                            &t1,
-                            &t2,
-                            &chunk_is_valid[i],
-                        );
+                        assert_conditional_equal(&t1, &t2, &chunk_is_valid[i]);
 
                         // assert (t1 - t2) * chunk_is_valid[i] == 0
                         let t1_sub_t2 = flex_gate.sub(
@@ -555,25 +540,19 @@ pub(crate) fn conditional_constraints(
                     }
                 }
                 // 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
-                for (i,chunk_hash_input) in chunk_pi_hash_preimages.iter().enumerate(){
-                    let chunk_is_padding = flex_gate.not(&mut ctx, QuantumCell::Existing(chunk_is_valid[i]));
-
+                for (i, chunk_hash_input) in chunk_pi_hash_preimages.iter().enumerate() {
                     for j in 0..DIGEST_LEN {
                         let t1 = assgined_cell_to_value(
                             flex_gate,
                             &mut ctx,
-                            &chunk_hash_input[j+PREV_STATE_ROOT_INDEX],
+                            &chunk_hash_input[j + PREV_STATE_ROOT_INDEX],
                         );
                         let t2 = assgined_cell_to_value(
                             flex_gate,
                             &mut ctx,
-                            &chunk_hash_input[j+POST_STATE_ROOT_INDEX],
+                            &chunk_hash_input[j + POST_STATE_ROOT_INDEX],
                         );
-                        assert_conditional_equal(
-                            &t1,
-                            &t2,
-                            &chunk_is_padding,
-                        );
+                        assert_conditional_equal(&t1, &t2, &chunk_is_pad[i]);
                         // assert (t1 - t2) * chunk_is_padding == 0
                         let t1_sub_t2 = flex_gate.sub(
                             &mut ctx,
@@ -583,7 +562,7 @@ pub(crate) fn conditional_constraints(
                         let res = flex_gate.mul(
                             &mut ctx,
                             QuantumCell::Existing(t1_sub_t2),
-                            QuantumCell::Existing(chunk_is_padding),
+                            QuantumCell::Existing(chunk_is_pad[i]),
                         );
                         flex_gate.assert_equal(
                             &mut ctx,
@@ -594,25 +573,20 @@ pub(crate) fn conditional_constraints(
                 }
 
                 // 7. chunk[i]'s data_hash == [0u8; 32] when chunk[i] is padded
-                for (i,chunk_hash_input) in chunk_pi_hash_preimages.iter().enumerate(){
-
-                    let chunk_is_padding = flex_gate.not(&mut ctx, QuantumCell::Existing(chunk_is_valid[i]));
-
+                for (i, chunk_hash_input) in chunk_pi_hash_preimages.iter().enumerate() {
                     for j in 0..DIGEST_LEN {
                         let t1 = assgined_cell_to_value(
                             flex_gate,
                             &mut ctx,
-                            &chunk_hash_input[j+CHUNK_DATA_HASH_INDEX],
+                            &chunk_hash_input[j + CHUNK_DATA_HASH_INDEX],
                         );
-                        assert_conditional_equal(
-                            &t1,
-                            &zero_cell,
-                            &chunk_is_padding,
-                        );
-                        // constrain t1 == 0 if chunk_is_padding == 1 
-                        let res = flex_gate.and(&mut ctx, 
+                        assert_conditional_equal(&t1, &zero_cell, &chunk_is_pad[i]);
+                        // constrain t1 == 0 if chunk_is_padding == 1
+                        let res = flex_gate.and(
+                            &mut ctx,
                             QuantumCell::Existing(t1),
-                            QuantumCell::Existing(chunk_is_padding)); 
+                            QuantumCell::Existing(chunk_is_pad[i]),
+                        );
                         flex_gate.assert_equal(
                             &mut ctx,
                             QuantumCell::Existing(res),
