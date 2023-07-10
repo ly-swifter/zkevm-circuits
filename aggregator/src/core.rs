@@ -41,7 +41,7 @@ use crate::{
     },
     util::{
         assert_conditional_equal, assert_equal, assert_exist, assgined_cell_to_value, capacity,
-        get_indices, is_smaller_than, parse_hash_digest_cells, parse_hash_preimage_cells,
+        get_indices, is_smaller_than, parse_hash_digest_cells, parse_hash_preimage_cells, assert_conditional_not_equal, assert_conditional_not_equal2,
     },
     AggregationConfig, CHUNK_DATA_HASH_INDEX, POST_STATE_ROOT_INDEX, PREV_STATE_ROOT_INDEX,
     WITHDRAW_ROOT_INDEX,
@@ -425,7 +425,7 @@ pub(crate) fn conditional_constraints(
                 ) = parse_hash_digest_cells(&hash_output_cells);
 
                 //
-                // 2.1 batch_data_hash digest is reused for public input hash
+                // 1 batch_data_hash digest is reused for public input hash
                 //
                 // public input hash is build as
                 //  keccak(
@@ -500,7 +500,7 @@ pub(crate) fn conditional_constraints(
                     }
                 }
 
-                // 2.3 same dataHash is used for batchDataHash and chunk[i].piHash
+                // 3 batch_data_hash and chunk[i].pi_hash use a same chunk[i].data_hash when chunk[i] is not padded
                 //
                 // batchDataHash = keccak(chunk[0].dataHash || ... || chunk[k-1].dataHash)
                 //
@@ -519,15 +519,6 @@ pub(crate) fn conditional_constraints(
                     .enumerate()
                 {
                     for (j, cell) in chunk.into_iter().enumerate() {
-                        // // sanity check
-                        // println!(
-                        //     "{} {} {:?} {:?} {:?}",
-                        //     i,
-                        //     j,
-                        //     cell.value(),
-                        //     chunk_pi_hash_preimages[i][j + CHUNK_DATA_HASH_INDEX].value(),
-                        //     chunk_is_valid[i].value()
-                        // );
 
                         assert_conditional_equal(
                             cell,
@@ -558,6 +549,27 @@ pub(crate) fn conditional_constraints(
                             &mut ctx,
                             QuantumCell::Existing(res),
                             QuantumCell::Existing(zero_cell),
+                        );
+                    }
+                }
+                // 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
+                for (i,chunk_hash_input) in chunk_pi_hash_preimages.iter().enumerate(){
+                    for j in 0..DIGEST_LEN {
+                        assert_conditional_not_equal(
+                            &chunk_hash_input[j+PREV_STATE_ROOT_INDEX],
+                            &chunk_hash_input[j+POST_STATE_ROOT_INDEX],
+                            &chunk_is_valid[i],
+                        );
+                    }
+                }
+
+                // 7. chunk[i]'s data_hash == [0u8; 32] when chunk[i] is padded
+                for (i,chunk_hash_input) in chunk_pi_hash_preimages.iter().enumerate(){
+                    for j in 0..DIGEST_LEN {
+                        assert_conditional_not_equal2(
+                            &chunk_hash_input[j+CHUNK_DATA_HASH_INDEX],
+                            &zero_cell,
+                            &chunk_is_valid[i],
                         );
                     }
                 }
