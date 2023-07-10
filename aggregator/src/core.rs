@@ -95,7 +95,7 @@ pub(crate) fn extract_accumulators_and_proof(
 
 /// Input the hash input bytes,
 /// assign the circuit for the hash function,
-/// return cells of the hash inputs
+/// return cells of the hash inputs and digests.
 //
 // This function asserts the following constraints on the hashes
 //
@@ -115,7 +115,7 @@ pub(crate) fn assign_batch_hashes(
     challenges: Challenges<Value<Fr>>,
     preimages: &[Vec<u8>],
     num_of_valid_chunks: usize,
-) -> Result<Vec<AssignedCell<Fr, Fr>>, Error> {
+) -> Result<(Vec<AssignedCell<Fr, Fr>>, Vec<AssignedCell<Fr, Fr>>), Error> {
     let (hash_input_cells, hash_output_cells) = extract_hash_cells(
         &config.keccak_circuit_config,
         layouter,
@@ -142,7 +142,7 @@ pub(crate) fn assign_batch_hashes(
         num_of_valid_chunks,
     )?;
 
-    Ok(hash_input_cells)
+    Ok((hash_input_cells, hash_output_cells))
 }
 
 pub(crate) fn extract_hash_cells(

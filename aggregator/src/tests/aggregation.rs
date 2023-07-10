@@ -23,7 +23,7 @@ fn test_aggregation_circuit() {
     let circuit = build_new_aggregation_circuit();
     let instance = circuit.instances();
 
-    let mock_prover = MockProver::<Fr>::run(22, &circuit, instance).unwrap();
+    let mock_prover = MockProver::<Fr>::run(25, &circuit, instance).unwrap();
 
     mock_prover.assert_satisfied_par();
 }

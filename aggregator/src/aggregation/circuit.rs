@@ -32,7 +32,7 @@ use crate::{
     batch::BatchHash,
     constants::{ACC_LEN, BITS, DIGEST_LEN, LIMBS, MAX_AGG_SNARKS},
     core::{assign_batch_hashes, chunk_is_valid, extract_accumulators_and_proof},
-    util::parse_hash_preimage_cells,
+    util::{parse_hash_digest_cells, parse_hash_preimage_cells},
     ConfigParams,
 };
 
@@ -271,7 +271,7 @@ impl Circuit<Fr> for AggregationCircuit {
         end_timer!(timer);
 
         let timer = start_timer!(|| ("assign cells").to_string());
-        let hash_preimage_cells = assign_batch_hashes(
+        let (hash_preimage_cells, hash_digest_cells) = assign_batch_hashes(
             &config,
             &mut layouter,
             challenges,
@@ -287,13 +287,16 @@ impl Circuit<Fr> for AggregationCircuit {
         // preimages
         let (batch_pi_hash_preimage, chunk_pi_hash_preimages, _potential_batch_data_hash_preimage) =
             parse_hash_preimage_cells(&hash_preimage_cells);
-
+        // digests
+        let (batch_pi_hash_digest, chunk_pi_hash_digests, potential_batch_data_hash_digest) =
+            parse_hash_digest_cells(&hash_digest_cells);
+        // sanity checks
         for i in 0..MAX_AGG_SNARKS {
             println!("{}-th hash", i);
             println!("preimage");
-            for (j, e) in chunk_pi_hash_preimages[i].iter().enumerate() {
+            for (j, e) in chunk_pi_hash_digests[i].iter().enumerate() {
                 println!("{} {:?}", j, e.value());
-                println!("{:?}", snark_inputs[i * DIGEST_LEN + j]);
+                println!("{:?}", snark_inputs[i * DIGEST_LEN + j].value());
             }
 
             println!("===============\n");
