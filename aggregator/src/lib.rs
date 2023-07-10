@@ -17,8 +17,6 @@ mod constants;
 mod core;
 /// Parameters for compression circuit
 mod param;
-/// modules for RLCs
-mod rlc;
 /// utilities
 mod util;
 

@@ -255,7 +255,6 @@ impl CircuitExt<Fr> for AggregationCircuit {
             .iter()
             .map(|gate| gate.q_enable)
             .into_iter()
-            .chain([config.0.rlc_config.selector].iter().cloned())
             .collect()
     }
 }

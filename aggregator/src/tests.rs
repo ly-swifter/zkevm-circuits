@@ -2,7 +2,7 @@ pub(crate) mod aggregation;
 pub(crate) mod compression;
 pub(crate) mod mock_chunk;
 
-mod rlc;
+// mod rlc;
 
 #[macro_export]
 macro_rules! layer_0 {

@@ -2,18 +2,87 @@ use std::iter;
 
 use ark_std::test_rng;
 use halo2_proofs::{
-    circuit::{Layouter, SimpleFloorPlanner},
+    circuit::{AssignedCell, Layouter, Region, SimpleFloorPlanner, Value},
     dev::MockProver,
     halo2curves::bn256::Fr,
-    plonk::{Circuit, Column, ConstraintSystem, Error, Instance},
+    plonk::{Advice, Circuit, Column, ConstraintSystem, Error, FirstPhase, Instance, Selector},
+    poly::Rotation,
 };
 use snark_verifier::loader::halo2::halo2_ecc::halo2_base;
 use snark_verifier_sdk::CircuitExt;
 
-use crate::{constants::ACC_LEN, rlc::RlcConfig, ChunkHash, LOG_DEGREE};
+use crate::{
+    constants::{ACC_LEN, DIGEST_LEN},
+    ChunkHash, LOG_DEGREE,
+};
 
-mod circuit;
-mod circuit_ext;
+/// This config is used to compute RLCs for bytes.
+/// It requires a phase 2 column
+#[derive(Debug, Clone, Copy)]
+pub struct MockConfig {
+    pub(crate) phase_1_column: Column<Advice>,
+    pub(crate) selector: Selector,
+    /// Instance for public input; stores
+    /// - accumulator from aggregation (12 elements); if not fresh
+    /// - batch_public_input_hash (32 elements)
+    pub(crate) instance: Column<Instance>,
+}
+
+impl MockConfig {
+    pub(crate) fn load_private(
+        &self,
+        region: &mut Region<Fr>,
+        f: &Fr,
+        offset: &mut usize,
+    ) -> Result<AssignedCell<Fr, Fr>, Error> {
+        let res = region.assign_advice(
+            || "load private",
+            self.phase_1_column,
+            *offset,
+            || Value::known(*f),
+        );
+        *offset += 1;
+        res
+    }
+
+    pub(crate) fn configure(meta: &mut ConstraintSystem<Fr>) -> Self {
+        let selector = meta.complex_selector();
+
+        // CS requires existence of at least one phase 1 column if we operate on phase 2 columns.
+        // This column is not really used.
+        let phase_1_column = {
+            let column = meta.advice_column_in(FirstPhase);
+            meta.enable_equality(column);
+            column
+        };
+
+        let instance = meta.instance_column();
+        meta.enable_equality(instance);
+
+        // phase_2_column | advice
+        // ---------------|-------
+        // a              | q
+        // b              | 0
+        // c              | 0
+        // d              | 0
+        //
+        // constraint: q*(a*b+c-d) = 0
+
+        meta.create_gate("rlc_gate", |meta| {
+            let a = meta.query_advice(phase_1_column, Rotation(0));
+            let b = meta.query_advice(phase_1_column, Rotation(1));
+            let c = meta.query_advice(phase_1_column, Rotation(2));
+            let d = meta.query_advice(phase_1_column, Rotation(3));
+            let q = meta.query_selector(selector);
+            vec![q * (a * b + c - d)]
+        });
+        Self {
+            phase_1_column,
+            selector,
+            instance,
+        }
+    }
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 /// A mock chunk circuit
@@ -49,15 +118,6 @@ impl MockChunkCircuit {
     }
 }
 
-#[derive(Clone, Copy)]
-pub(crate) struct MockConfig {
-    pub(crate) rlc_config: RlcConfig,
-    /// Instance for public input; stores
-    /// - accumulator from aggregation (12 elements); if not fresh
-    /// - batch_public_input_hash (32 elements)
-    pub(crate) instance: Column<Instance>,
-}
-
 impl Circuit<Fr> for MockChunkCircuit {
     type Config = MockConfig;
     type FloorPlanner = SimpleFloorPlanner;
@@ -68,17 +128,7 @@ impl Circuit<Fr> for MockChunkCircuit {
 
     fn configure(meta: &mut ConstraintSystem<Fr>) -> Self::Config {
         meta.set_minimum_degree(4);
-        let rlc_config = RlcConfig::configure(meta);
-        // Instance column stores public input column
-        // - the accumulator
-        // - the batch public input hash
-        let instance = meta.instance_column();
-        meta.enable_equality(instance);
-
-        Self::Config {
-            rlc_config,
-            instance,
-        }
+        MockConfig::configure(meta)
     }
 
     fn synthesize(
@@ -105,7 +155,6 @@ impl Circuit<Fr> for MockChunkCircuit {
                     .enumerate()
                 {
                     let cell = config
-                        .rlc_config
                         .load_private(&mut region, &Fr::from(byte as u64), &mut index)
                         .unwrap();
                     cells.push(cell)
@@ -119,6 +168,23 @@ impl Circuit<Fr> for MockChunkCircuit {
             layouter.constrain_instance(cell.cell(), config.instance, i)?;
         }
         Ok(())
+    }
+}
+impl CircuitExt<Fr> for MockChunkCircuit {
+    /// 32 elements from digest
+    fn num_instance(&self) -> Vec<usize> {
+        let acc_len = if self.is_fresh { 0 } else { ACC_LEN };
+        vec![DIGEST_LEN + acc_len]
+    }
+
+    /// return vec![data hash | public input hash]
+    fn instances(&self) -> Vec<Vec<Fr>> {
+        let acc_len = if self.is_fresh { 0 } else { ACC_LEN };
+        vec![iter::repeat(0)
+            .take(acc_len)
+            .chain(self.chunk.public_input_hash().as_bytes().iter().copied())
+            .map(|x| Fr::from(x as u64))
+            .collect()]
     }
 }
 
