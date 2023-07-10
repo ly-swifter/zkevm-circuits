@@ -377,7 +377,7 @@ pub(crate) fn conditional_constraints(
     let mut first_pass = halo2_base::SKIP_FIRST_PASS;
     layouter
         .assign_region(
-            || "conditional constraints",
+            || "aggregation",
             |region| {
                 if first_pass {
                     first_pass = false;

@@ -175,6 +175,8 @@ impl Circuit<Fr> for AggregationCircuit {
         // ==============================================
         // Step 1: snark aggregation circuit
         // ==============================================
+
+        let timer = start_timer!(|| "aggregation");
         // stores accumulators for all snarks, including the padded ones
         let mut accumulator_instances: Vec<AssignedValue<Fr>> = vec![];
         // stores public inputs for all snarks, including the padded ones
@@ -244,20 +246,20 @@ impl Circuit<Fr> for AggregationCircuit {
         for (i, v) in accumulator_instances.iter().enumerate() {
             layouter.constrain_instance(v.cell(), config.instance, i)?;
         }
-
+        end_timer!(timer);
         // ==============================================
         // step 2: public input aggregation circuit
         // ==============================================
         // extract all the hashes and load them to the hash table
         let challenges = challenge.values(&layouter);
 
-        let timer = start_timer!(|| ("load aux table").to_string());
+        let timer = start_timer!(|| "load aux table");
         config
             .keccak_circuit_config
             .load_aux_tables(&mut layouter)?;
         end_timer!(timer);
 
-        let timer = start_timer!(|| ("extract hash").to_string());
+        let timer = start_timer!(|| "extract hash");
         // orders:
         // - batch_public_input_hash
         // - chunk\[i\].piHash for i in \[0, MAX_AGG_SNARKS)
@@ -270,7 +272,7 @@ impl Circuit<Fr> for AggregationCircuit {
         );
         end_timer!(timer);
 
-        let timer = start_timer!(|| ("assign cells").to_string());
+        let timer = start_timer!(|| ("assign hash cells").to_string());
         let (hash_preimage_cells, hash_digest_cells) = assign_batch_hashes(
             &config,
             &mut layouter,
@@ -284,19 +286,20 @@ impl Circuit<Fr> for AggregationCircuit {
         // ====================================================
         // parse the hashes
         // ====================================================
-        // preimages
-        let (batch_pi_hash_preimage, chunk_pi_hash_preimages, _potential_batch_data_hash_preimage) =
-            parse_hash_preimage_cells(&hash_preimage_cells);
         // digests
         let (batch_pi_hash_digest, chunk_pi_hash_digests, potential_batch_data_hash_digest) =
             parse_hash_digest_cells(&hash_digest_cells);
         // sanity checks
         for i in 0..MAX_AGG_SNARKS {
-            println!("{}-th hash", i);
-            println!("preimage");
-            for (j, e) in chunk_pi_hash_digests[i].iter().enumerate() {
-                println!("{} {:?}", j, e.value());
-                println!("{:?}", snark_inputs[i * DIGEST_LEN + j].value());
+            for j in 0..4 {
+                for k in 0..8 {
+                    println!("{}-th hash", i);
+                    println!("{} {:?}", j, chunk_pi_hash_digests[i][j * 8 + k].value());
+                    println!(
+                        "{:?}",
+                        snark_inputs[i * DIGEST_LEN + (3 - j) * 8 + k].value()
+                    );
+                }
             }
 
             println!("===============\n");

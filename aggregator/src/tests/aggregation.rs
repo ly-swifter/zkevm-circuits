@@ -7,28 +7,15 @@ use snark_verifier::loader::halo2::halo2_ecc::halo2_base::utils::fs::gen_srs;
 use snark_verifier_sdk::{gen_pk, gen_snark_shplonk, verify_snark_shplonk, CircuitExt};
 
 use crate::{
-    aggregation::AggregationCircuit,
-    batch::BatchHash,
-    chunk::dummy_chunk_circuit::DummyChunkHashCircuit,
-    constants::{LOG_DEGREE, MAX_AGG_SNARKS},
-    layer_0, ChunkHash,
+    aggregation::AggregationCircuit, batch::BatchHash,
+    chunk::dummy_chunk_circuit::DummyChunkHashCircuit, constants::MAX_AGG_SNARKS, layer_0,
+    ChunkHash,
 };
 
 use super::mock_chunk::MockChunkCircuit;
 
-const CHUNKS_PER_BATCH: usize = 2;
-
 #[test]
 fn test_aggregation_circuit() {
-    let circuit = build_new_aggregation_circuit();
-    let instance = circuit.instances();
-
-    let mock_prover = MockProver::<Fr>::run(25, &circuit, instance).unwrap();
-
-    mock_prover.assert_satisfied_par();
-}
-
-fn build_new_aggregation_circuit() -> AggregationCircuit {
     env_logger::init();
     let process_id = process::id();
 
@@ -36,16 +23,38 @@ fn build_new_aggregation_circuit() -> AggregationCircuit {
     let path = Path::new(dir.as_str());
     fs::create_dir(path).unwrap();
 
+    {
+        // This set up requires one round of keccak for chunk's data hash
+        let circuit = build_new_aggregation_circuit(2);
+        let instance = circuit.instances();
+
+        let mock_prover = MockProver::<Fr>::run(25, &circuit, instance).unwrap();
+
+        mock_prover.assert_satisfied_par();
+    }
+
+    {
+        // This set up requires two rounds of keccak for chunk's data hash
+        let circuit = build_new_aggregation_circuit(5);
+        let instance = circuit.instances();
+
+        let mock_prover = MockProver::<Fr>::run(25, &circuit, instance).unwrap();
+
+        mock_prover.assert_satisfied_par();
+    }
+}
+
+fn build_new_aggregation_circuit(num_chunks: usize) -> AggregationCircuit {
     // inner circuit: Mock circuit
     let k0 = 8;
 
     let mut rng = test_rng();
     let params = gen_srs(k0);
 
-    let mut chunks_without_padding = (0..CHUNKS_PER_BATCH)
+    let mut chunks_without_padding = (0..num_chunks)
         .map(|_| ChunkHash::mock_random_chunk_hash_for_testing(&mut rng))
         .collect_vec();
-    for i in 0..CHUNKS_PER_BATCH - 1 {
+    for i in 0..num_chunks - 1 {
         chunks_without_padding[i + 1].prev_state_root = chunks_without_padding[i].post_state_root;
     }
     // ==========================
@@ -66,11 +75,10 @@ fn build_new_aggregation_circuit() -> AggregationCircuit {
     // padded chunks
     // ==========================
     let padded_snarks = {
-        let dummy_chunk =
-            ChunkHash::dummy_chunk_hash(&chunks_without_padding[CHUNKS_PER_BATCH - 1]);
+        let dummy_chunk = ChunkHash::dummy_chunk_hash(&chunks_without_padding[num_chunks - 1]);
         let circuit = DummyChunkHashCircuit::new(dummy_chunk);
         let snark = layer_0!(circuit, DummyChunkHashCircuit, params, k0, path);
-        vec![snark; MAX_AGG_SNARKS - CHUNKS_PER_BATCH]
+        vec![snark; MAX_AGG_SNARKS - num_chunks]
     };
 
     // ==========================
