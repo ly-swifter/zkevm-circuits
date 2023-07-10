@@ -393,8 +393,8 @@ pub(crate) fn assert_equal<F: Field>(a: &AssignedCell<F, F>, b: &AssignedCell<F,
 // if cond = 1, assert two cells have same value;
 // (NOT constraining equality in circuit)
 pub(crate) fn assert_conditional_equal<F: Field>(
-    a: &AssignedCell<F, F>,
-    b: &AssignedCell<F, F>,
+    a: &AssignedValue<F>,
+    b: &AssignedValue<F>,
     cond: &AssignedValue<F>,
 ) {
     let mut t1 = F::default();
@@ -408,45 +408,24 @@ pub(crate) fn assert_conditional_equal<F: Field>(
     }
 }
 
-#[inline]
-// if cond = 0, assert two cells have same value;
-// (NOT constraining equality in circuit)
-pub(crate) fn assert_conditional_not_equal<F: Field>(
-    a: &AssignedCell<F, F>,
-    b: &AssignedCell<F, F>,
-    cond: &AssignedValue<F>,
-) {
-    let mut t1 = F::default();
-    let mut t2 = F::default();
-    let mut c = F::default();
-    a.value().map(|f| t1 = *f);
-    b.value().map(|f| t2 = *f);
-    cond.value().map(|f| c = *f);
-    if c == F::zero() {
-        assert_eq!(t1, t2)
-    }
-}
-
-
-#[inline]
-// if cond = 0, assert two cells have same value;
-// (NOT constraining equality in circuit)
-pub(crate) fn assert_conditional_not_equal2<F: Field>(
-    a: &AssignedCell<F, F>,
-    b: &AssignedValue<F>,
-    cond: &AssignedValue<F>,
-) {
-    let mut t1 = F::default();
-    let mut t2 = F::default();
-    let mut c = F::default();
-    a.value().map(|f| t1 = *f);
-    b.value().map(|f| t2 = *f);
-    cond.value().map(|f| c = *f);
-    if c == F::zero() {
-        assert_eq!(t1, t2)
-    }
-}
-
+// #[inline]
+// // if cond = 0, assert two cells have same value;
+// // (NOT constraining equality in circuit)
+// pub(crate) fn assert_conditional_not_equal<F: Field>(
+//     a: &AssignedValue<F>,
+//     b: &AssignedValue<F>,
+//     cond: &AssignedValue<F>,
+// ) {
+//     let mut t1 = F::default();
+//     let mut t2 = F::default();
+//     let mut c = F::default();
+//     a.value().map(|f| t1 = *f);
+//     b.value().map(|f| t2 = *f);
+//     cond.value().map(|f| c = *f);
+//     if c == F::zero() {
+//         assert_eq!(t1, t2)
+//     }
+// }
 
 #[inline]
 // assert a \in (b1, b2, b3)

@@ -40,8 +40,9 @@ use crate::{
         CHAIN_ID_LEN, DIGEST_LEN, LOG_DEGREE, MAX_AGG_SNARKS, MAX_KECCAK_ROUNDS, ROUND_LEN,
     },
     util::{
-        assert_conditional_equal, assert_equal, assert_exist, assgined_cell_to_value, capacity,
-        get_indices, is_smaller_than, parse_hash_digest_cells, parse_hash_preimage_cells, assert_conditional_not_equal, assert_conditional_not_equal2,
+        assert_conditional_equal, assert_conditional_not_equal, assert_equal, assert_exist,
+        assgined_cell_to_value, capacity, get_indices, is_smaller_than, parse_hash_digest_cells,
+        parse_hash_preimage_cells,
     },
     AggregationConfig, CHUNK_DATA_HASH_INDEX, POST_STATE_ROOT_INDEX, PREV_STATE_ROOT_INDEX,
     WITHDRAW_ROOT_INDEX,
@@ -520,11 +521,7 @@ pub(crate) fn conditional_constraints(
                 {
                     for (j, cell) in chunk.into_iter().enumerate() {
 
-                        assert_conditional_equal(
-                            cell,
-                            &chunk_pi_hash_preimages[i][j + CHUNK_DATA_HASH_INDEX],
-                            &chunk_is_valid[i],
-                        );
+
 
                         // convert halo2 proof's cells to halo2-lib's
                         let t1 = assgined_cell_to_value(flex_gate, &mut ctx, &cell);
@@ -532,6 +529,11 @@ pub(crate) fn conditional_constraints(
                             flex_gate,
                             &mut ctx,
                             &chunk_pi_hash_preimages[i][j + CHUNK_DATA_HASH_INDEX],
+                        );
+                        assert_conditional_equal(
+                            &t1,
+                            &t2,
+                            &chunk_is_valid[i],
                         );
 
                         // assert (t1 - t2) * chunk_is_valid[i] == 0
@@ -554,22 +556,67 @@ pub(crate) fn conditional_constraints(
                 }
                 // 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
                 for (i,chunk_hash_input) in chunk_pi_hash_preimages.iter().enumerate(){
+                    let chunk_is_padding = flex_gate.not(&mut ctx, QuantumCell::Existing(chunk_is_valid[i]));
+
                     for j in 0..DIGEST_LEN {
-                        assert_conditional_not_equal(
+                        let t1 = assgined_cell_to_value(
+                            flex_gate,
+                            &mut ctx,
                             &chunk_hash_input[j+PREV_STATE_ROOT_INDEX],
+                        );
+                        let t2 = assgined_cell_to_value(
+                            flex_gate,
+                            &mut ctx,
                             &chunk_hash_input[j+POST_STATE_ROOT_INDEX],
-                            &chunk_is_valid[i],
+                        );
+                        assert_conditional_equal(
+                            &t1,
+                            &t2,
+                            &chunk_is_padding,
+                        );
+                        // assert (t1 - t2) * chunk_is_padding == 0
+                        let t1_sub_t2 = flex_gate.sub(
+                            &mut ctx,
+                            QuantumCell::Existing(t1),
+                            QuantumCell::Existing(t2),
+                        );
+                        let res = flex_gate.mul(
+                            &mut ctx,
+                            QuantumCell::Existing(t1_sub_t2),
+                            QuantumCell::Existing(chunk_is_padding),
+                        );
+                        flex_gate.assert_equal(
+                            &mut ctx,
+                            QuantumCell::Existing(res),
+                            QuantumCell::Existing(zero_cell),
                         );
                     }
                 }
 
                 // 7. chunk[i]'s data_hash == [0u8; 32] when chunk[i] is padded
                 for (i,chunk_hash_input) in chunk_pi_hash_preimages.iter().enumerate(){
+
+                    let chunk_is_padding = flex_gate.not(&mut ctx, QuantumCell::Existing(chunk_is_valid[i]));
+
                     for j in 0..DIGEST_LEN {
-                        assert_conditional_not_equal2(
+                        let t1 = assgined_cell_to_value(
+                            flex_gate,
+                            &mut ctx,
                             &chunk_hash_input[j+CHUNK_DATA_HASH_INDEX],
+                        );
+                        assert_conditional_equal(
+                            &t1,
                             &zero_cell,
-                            &chunk_is_valid[i],
+                            &chunk_is_padding,
+                        );
+                        // constrain t1 == 0 if chunk_is_padding == 1 
+                        let res = flex_gate.and(&mut ctx, 
+                            QuantumCell::Existing(t1),
+                            QuantumCell::Existing(chunk_is_padding)); 
+                        flex_gate.assert_equal(
+                            &mut ctx,
+                            QuantumCell::Existing(res),
+                            QuantumCell::Existing(zero_cell),
                         );
                     }
                 }
