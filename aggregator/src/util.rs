@@ -408,25 +408,6 @@ pub(crate) fn assert_conditional_equal<F: Field>(
     }
 }
 
-// #[inline]
-// // if cond = 0, assert two cells have same value;
-// // (NOT constraining equality in circuit)
-// pub(crate) fn assert_conditional_not_equal<F: Field>(
-//     a: &AssignedValue<F>,
-//     b: &AssignedValue<F>,
-//     cond: &AssignedValue<F>,
-// ) {
-//     let mut t1 = F::default();
-//     let mut t2 = F::default();
-//     let mut c = F::default();
-//     a.value().map(|f| t1 = *f);
-//     b.value().map(|f| t2 = *f);
-//     cond.value().map(|f| c = *f);
-//     if c == F::zero() {
-//         assert_eq!(t1, t2)
-//     }
-// }
-
 #[inline]
 // assert a \in (b1, b2, b3)
 pub(crate) fn assert_exist<F: Field>(
@@ -464,13 +445,6 @@ pub(crate) fn is_smaller_than<F: FieldExt>(
     // else the last bit will be 0
     let c = gate_config.sub(ctx, QuantumCell::Existing(*a), QuantumCell::Existing(*b));
     let c_bits = gate_config.num_to_bits(ctx, &c, 254);
-
-    // println!(
-    //     "a {:?}, b {:?}, c_bits {:?}",
-    //     a.value,
-    //     b.value,
-    //     c_bits.last().unwrap().value
-    // );
 
     *c_bits.last().unwrap()
 }

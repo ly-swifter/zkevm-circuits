@@ -171,6 +171,12 @@ impl Circuit<Fr> for AggregationCircuit {
             .load_lookup_table(&mut layouter)
             .expect("load range lookup table");
 
+        let timer = start_timer!(|| ("load aux table").to_string());
+        config
+            .keccak_circuit_config
+            .load_aux_tables(&mut layouter)?;
+        end_timer!(timer);
+
         let mut first_pass = halo2_base::SKIP_FIRST_PASS;
         // ==============================================
         // Step 1: snark aggregation circuit
@@ -237,15 +243,6 @@ impl Circuit<Fr> for AggregationCircuit {
                 Ok(())
             },
         )?;
-
-        log::trace!("instance outside aggregation function");
-        for (i, e) in snark_inputs.iter().enumerate() {
-            log::trace!("{}-th instance: {:?}", i, e.value)
-        }
-        // assert the accumulator in aggregation instance matches public input
-        for (i, v) in accumulator_instances.iter().enumerate() {
-            layouter.constrain_instance(v.cell(), config.instance, i)?;
-        }
         end_timer!(timer);
         // ==============================================
         // step 2: public input aggregation circuit
@@ -273,7 +270,7 @@ impl Circuit<Fr> for AggregationCircuit {
         end_timer!(timer);
 
         let timer = start_timer!(|| ("assign hash cells").to_string());
-        let (hash_preimage_cells, hash_digest_cells) = assign_batch_hashes(
+        let (_hash_preimage_cells, hash_digest_cells) = assign_batch_hashes(
             &config,
             &mut layouter,
             challenges,
@@ -283,26 +280,46 @@ impl Circuit<Fr> for AggregationCircuit {
         .unwrap();
         end_timer!(timer);
 
-        // ====================================================
-        // parse the hashes
-        // ====================================================
+        // ==============================================
+        // step 3: ssert public inputs to the snarks are correct
+        // ==============================================
         // digests
-        let (batch_pi_hash_digest, chunk_pi_hash_digests, potential_batch_data_hash_digest) =
+        let (batch_pi_hash_digest, chunk_pi_hash_digests, _potential_batch_data_hash_digest) =
             parse_hash_digest_cells(&hash_digest_cells);
-        // sanity checks
-        for i in 0..MAX_AGG_SNARKS {
-            for j in 0..4 {
-                for k in 0..8 {
-                    println!("{}-th hash", i);
-                    println!("{} {:?}", j, chunk_pi_hash_digests[i][j * 8 + k].value());
-                    println!(
-                        "{:?}",
-                        snark_inputs[i * DIGEST_LEN + (3 - j) * 8 + k].value()
-                    );
-                }
-            }
 
-            println!("===============\n");
+        layouter.assign_region(
+            || "aggregation",
+            |mut region| {
+                for i in 0..MAX_AGG_SNARKS {
+                    for j in 0..4 {
+                        for k in 0..8 {
+                            region.constrain_equal(
+                                chunk_pi_hash_digests[i][j * 8 + k].cell(),
+                                snark_inputs[i * DIGEST_LEN + (3 - j) * 8 + k].cell(),
+                            )?;
+                        }
+                    }
+                }
+
+                Ok(())
+            },
+        )?;
+
+        // ==============================================
+        // step 4: assert public inputs to the aggregator circuit are correct
+        // ==============================================
+        // accumulator
+        assert!(accumulator_instances.len() == ACC_LEN);
+        for (i, v) in accumulator_instances.iter().enumerate() {
+            layouter.constrain_instance(v.cell(), config.instance, i)?;
+        }
+        // public input hash
+        for i in 0..DIGEST_LEN {
+            layouter.constrain_instance(
+                batch_pi_hash_digest[i].cell(),
+                config.instance,
+                i + ACC_LEN,
+            )?;
         }
 
         end_timer!(witness_time);

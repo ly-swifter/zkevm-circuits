@@ -21,7 +21,7 @@ use crate::{
 #[derive(Debug, Clone, Copy)]
 pub struct MockConfig {
     pub(crate) phase_1_column: Column<Advice>,
-    pub(crate) selector: Selector,
+    pub(crate) _selector: Selector,
     /// Instance for public input; stores
     /// - accumulator from aggregation (12 elements); if not fresh
     /// - batch_public_input_hash (32 elements)
@@ -78,7 +78,7 @@ impl MockConfig {
         });
         Self {
             phase_1_column,
-            selector,
+            _selector: selector,
             instance,
         }
     }
@@ -93,7 +93,7 @@ impl MockConfig {
 /// - public input hash
 pub(crate) struct MockChunkCircuit {
     pub(crate) is_fresh: bool,
-    pub(crate) chain_id: u64,
+    pub(crate) _chain_id: u64,
     pub(crate) chunk: ChunkHash,
 }
 
@@ -102,7 +102,7 @@ impl MockChunkCircuit {
     pub(crate) fn new(is_fresh: bool, chain_id: u64, chunk: ChunkHash) -> Self {
         MockChunkCircuit {
             is_fresh,
-            chain_id,
+            _chain_id: chain_id,
             chunk,
         }
     }
@@ -112,7 +112,7 @@ impl MockChunkCircuit {
     pub(crate) fn random<R: rand::RngCore>(r: &mut R, is_fresh: bool) -> Self {
         Self {
             is_fresh,
-            chain_id: 0,
+            _chain_id: 0,
             chunk: ChunkHash::mock_random_chunk_hash_for_testing(r),
         }
     }
