@@ -9,7 +9,10 @@ use snark_verifier::loader::halo2::halo2_ecc::halo2_base::{
     AssignedValue, Context, QuantumCell,
 };
 
-use crate::{constants::MAX_AGG_SNARKS, DEFAULT_KECCAK_ROWS, NUM_ROUNDS};
+use crate::{
+    constants::{DIGEST_LEN, MAX_AGG_SNARKS, ROUND_LEN},
+    DEFAULT_KECCAK_ROWS, NUM_ROUNDS,
+};
 
 use std::env::var;
 
@@ -444,12 +447,12 @@ pub(crate) fn is_smaller_than<F: FieldExt>(
     let c = gate_config.sub(ctx, QuantumCell::Existing(*a), QuantumCell::Existing(*b));
     let c_bits = gate_config.num_to_bits(ctx, &c, 254);
 
-    println!(
-        "a {:?}, b {:?}, c_bits {:?}",
-        a.value,
-        b.value,
-        c_bits.last().unwrap().value
-    );
+    // println!(
+    //     "a {:?}, b {:?}, c_bits {:?}",
+    //     a.value,
+    //     b.value,
+    //     c_bits.last().unwrap().value
+    // );
 
     *c_bits.last().unwrap()
 }
@@ -466,4 +469,49 @@ pub(crate) fn assgined_cell_to_value(
         .constrain_equal(assigned_cell.cell(), assigned_value.cell)
         .unwrap();
     assigned_value
+}
+
+#[inline]
+pub(crate) fn parse_hash_preimage_cells<'a>(
+    hash_input_cells: &'a [AssignedCell<Fr, Fr>],
+) -> (
+    &'a [AssignedCell<Fr, Fr>],
+    Vec<&'a [AssignedCell<Fr, Fr>]>,
+    &'a [AssignedCell<Fr, Fr>],
+) {
+    let batch_pi_hash_preimage = &hash_input_cells[0..ROUND_LEN * 2];
+    let mut chunk_pi_hash_preimages = vec![];
+    for i in 0..MAX_AGG_SNARKS {
+        chunk_pi_hash_preimages
+            .push(&hash_input_cells[ROUND_LEN * 2 * (i + 1)..ROUND_LEN * 2 * (i + 2)]);
+    }
+    let potential_batch_data_hash_preimage =
+        &hash_input_cells[ROUND_LEN * 2 * (MAX_AGG_SNARKS + 1)..];
+
+    (
+        batch_pi_hash_preimage,
+        chunk_pi_hash_preimages,
+        potential_batch_data_hash_preimage,
+    )
+}
+
+#[inline]
+pub(crate) fn parse_hash_digest_cells<'a>(
+    hash_output_cells: &'a [AssignedCell<Fr, Fr>],
+) -> (
+    &'a [AssignedCell<Fr, Fr>],
+    Vec<&'a [AssignedCell<Fr, Fr>]>,
+    &'a [AssignedCell<Fr, Fr>],
+) {
+    let batch_pi_hash_digest = &hash_output_cells[0..DIGEST_LEN];
+    let mut chunk_pi_hash_digests = vec![];
+    for i in 0..MAX_AGG_SNARKS {
+        chunk_pi_hash_digests.push(&hash_output_cells[DIGEST_LEN * (i + 1)..DIGEST_LEN * (i + 2)]);
+    }
+    let potential_batch_data_hash_digest = &hash_output_cells[DIGEST_LEN * (MAX_AGG_SNARKS + 1)..];
+    (
+        batch_pi_hash_digest,
+        chunk_pi_hash_digests,
+        potential_batch_data_hash_digest,
+    )
 }

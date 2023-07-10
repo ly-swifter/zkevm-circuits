@@ -41,7 +41,7 @@ use crate::{
     },
     util::{
         assert_conditional_equal, assert_equal, assert_exist, assgined_cell_to_value, capacity,
-        get_indices, is_smaller_than,
+        get_indices, is_smaller_than, parse_hash_digest_cells, parse_hash_preimage_cells,
     },
     AggregationConfig, CHUNK_DATA_HASH_INDEX, POST_STATE_ROOT_INDEX, PREV_STATE_ROOT_INDEX,
     WITHDRAW_ROOT_INDEX,
@@ -96,6 +96,17 @@ pub(crate) fn extract_accumulators_and_proof(
 /// Input the hash input bytes,
 /// assign the circuit for the hash function,
 /// return cells of the hash inputs and digests.
+// This function asserts the following constraints on the hashes
+// 1. batch_data_hash digest is reused for public input hash
+// 2. batch_pi_hash used same roots as chunk_pi_hash
+// 2.1. batch_pi_hash and chunk[0] use a same prev_state_root
+// 2.2. batch_pi_hash and chunk[MAX_AGG_SNARKS-1] use a same post_state_root
+// 2.3. batch_pi_hash and chunk[MAX_AGG_SNARKS-1] use a same withdraw_root
+// 3. batch_data_hash and chunk[i].pi_hash use a same chunk[i].data_hash when chunk[i] is not padded
+// 4. chunks are continuous: they are linked via the state roots
+// 5. batch and all its chunks use a same chain id
+// 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
+// 7. chunk[i]'s data_hash == [0u8; 32] when chunk[i] is padded
 #[allow(clippy::type_complexity)]
 pub(crate) fn assign_batch_hashes(
     config: &AggregationConfig,
@@ -110,11 +121,48 @@ pub(crate) fn assign_batch_hashes(
     ),
     Error,
 > {
+    let (hash_input_cells, hash_output_cells) = extract_hash_cells(
+        &config.keccak_circuit_config,
+        layouter,
+        challenges,
+        preimages,
+    )?;
+    // 2. batch_pi_hash used same roots as chunk_pi_hash
+    // 2.1. batch_pi_hash and chunk[0] use a same prev_state_root
+    // 2.2. batch_pi_hash and chunk[MAX_AGG_SNARKS-1] use a same post_state_root
+    // 2.3. batch_pi_hash and chunk[MAX_AGG_SNARKS-1] use a same withdraw_root
+    // 4. chunks are continuous: they are linked via the state roots
+    // 5. batch and all its chunks use a same chain id
+    copy_constraints(layouter, &hash_input_cells)?;
+    // 1. batch_data_hash digest is reused for public input hash
+    // 3. batch_data_hash and chunk[i].pi_hash use a same chunk[i].data_hash when chunk[i] is not
+    // padded 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
+    // 7. chunk[i]'s data_hash == [0u8; 32] when chunk[i] is padded
+    conditional_constraints(
+        config.flex_gate(),
+        layouter,
+        &hash_input_cells,
+        &hash_output_cells,
+        num_of_valid_chunks,
+    )?;
+
+    Ok((hash_input_cells, hash_output_cells))
+}
+
+pub(crate) fn extract_hash_cells(
+    keccak_config: &KeccakCircuitConfig<Fr>,
+    layouter: &mut impl Layouter<Fr>,
+    challenges: Challenges<Value<Fr>>,
+    preimages: &[Vec<u8>],
+) -> Result<
+    (
+        Vec<AssignedCell<Fr, Fr>>, // input cells
+        Vec<AssignedCell<Fr, Fr>>, // digest cells
+    ),
+    Error,
+> {
     let mut is_first_time = true;
     let num_rows = 1 << LOG_DEGREE;
-
-    let keccak_config = &config.keccak_circuit_config;
-    let flex_gate = config.flex_gate();
 
     let timer = start_timer!(|| ("multi keccak").to_string());
     // preimages consists of the following parts
@@ -178,39 +226,59 @@ pub(crate) fn assign_batch_hashes(
                 }
                 end_timer!(timer);
 
-                // ====================================================
-                // parse the hashes
-                // ====================================================
-
                 // sanity
                 assert_eq!(hash_input_cells.len(), MAX_KECCAK_ROUNDS * ROUND_LEN);
                 assert_eq!(hash_output_cells.len(), (MAX_AGG_SNARKS + 4) * DIGEST_LEN);
 
+                keccak_config
+                    .keccak_table
+                    .annotate_columns_in_region(&mut region);
+                keccak_config.annotate_circuit(&mut region);
+                Ok(())
+            },
+        )
+        .unwrap();
+    Ok((hash_input_cells, hash_output_cells))
+}
+
+// Assert the following constraints
+// 2. batch_pi_hash used same roots as chunk_pi_hash
+// 2.1. batch_pi_hash and chunk[0] use a same prev_state_root
+// 2.2. batch_pi_hash and chunk[MAX_AGG_SNARKS-1] use a same post_state_root
+// 2.3. batch_pi_hash and chunk[MAX_AGG_SNARKS-1] use a same withdraw_root
+// 4. chunks are continuous: they are linked via the state roots
+// 5. batch and all its chunks use a same chain id
+fn copy_constraints(
+    layouter: &mut impl Layouter<Fr>,
+    hash_input_cells: &[AssignedCell<Fr, Fr>],
+) -> Result<(), Error> {
+    let mut is_first_time = true;
+
+    layouter
+        .assign_region(
+            || "assign keccak rows",
+            |mut region| {
+                if is_first_time {
+                    is_first_time = false;
+                    return Ok(());
+                }
+                // ====================================================
+                // parse the hashes
+                // ====================================================
+
                 // preimages
-                let batch_pi_hash_preimage = &hash_input_cells[0..ROUND_LEN * 2];
-                let mut chunk_pi_hash_preimages = vec![];
-                for i in 0..MAX_AGG_SNARKS {
-                    chunk_pi_hash_preimages
-                        .push(&hash_input_cells[ROUND_LEN * 2 * (i + 1)..ROUND_LEN * 2 * (i + 2)]);
-                }
-                let potential_batch_data_hash_preimage =
-                    &hash_input_cells[ROUND_LEN * 2 * (MAX_AGG_SNARKS + 1)..];
-
-                // digests
-                let batch_pi_hash_digest = &hash_output_cells[0..DIGEST_LEN];
-                let mut chunk_pi_hash_digests = vec![];
-                for i in 0..MAX_AGG_SNARKS {
-                    chunk_pi_hash_digests
-                        .push(&hash_output_cells[DIGEST_LEN * (i + 1)..DIGEST_LEN * (i + 2)]);
-                }
-                let potential_batch_data_hash_digest =
-                    &hash_output_cells[DIGEST_LEN * (MAX_AGG_SNARKS + 1)..];
+                let (
+                    batch_pi_hash_preimage,
+                    chunk_pi_hash_preimages,
+                    _potential_batch_data_hash_preimage,
+                ) = parse_hash_preimage_cells(&hash_input_cells);
 
                 // ====================================================
-                // Step 2. Constraint the relations between hash preimages and digests
+                // Constraint the relations between hash preimages and digests
+                // via copy constraints
                 // ====================================================
 
-                // 2.2 batch_pi_hash used same roots as chunk_pi_hash
+                // 2 batch_pi_hash used same roots as chunk_pi_hash
                 //
                 // batch_pi_hash =
                 //   keccak(
@@ -232,7 +300,7 @@ pub(crate) fn assign_batch_hashes(
                 // used below are byte positions for
                 // prev_state_root, post_state_root, withdraw_root
                 for i in 0..32 {
-                    // 2.2.1 chunk[0].prev_state_root
+                    // 2.1 chunk[0].prev_state_root
                     // sanity check
                     assert_equal(
                         &batch_pi_hash_preimage[i + PREV_STATE_ROOT_INDEX],
@@ -242,7 +310,7 @@ pub(crate) fn assign_batch_hashes(
                         batch_pi_hash_preimage[i + PREV_STATE_ROOT_INDEX].cell(),
                         chunk_pi_hash_preimages[0][i + PREV_STATE_ROOT_INDEX].cell(),
                     )?;
-                    // 2.2.2 chunk[k-1].post_state_root
+                    // 2.2 chunk[k-1].post_state_root
                     // sanity check
                     assert_equal(
                         &batch_pi_hash_preimage[i + POST_STATE_ROOT_INDEX],
@@ -253,7 +321,7 @@ pub(crate) fn assign_batch_hashes(
                         chunk_pi_hash_preimages[MAX_AGG_SNARKS - 1][i + POST_STATE_ROOT_INDEX]
                             .cell(),
                     )?;
-                    // 2.2.3 chunk[k-1].withdraw_root
+                    // 2.3 chunk[k-1].withdraw_root
                     assert_equal(
                         &batch_pi_hash_preimage[i + WITHDRAW_ROOT_INDEX],
                         &chunk_pi_hash_preimages[MAX_AGG_SNARKS - 1][i + WITHDRAW_ROOT_INDEX],
@@ -264,7 +332,7 @@ pub(crate) fn assign_batch_hashes(
                     )?;
                 }
 
-                // 2.4  chunks are continuous: they are linked via the state roots
+                // 4  chunks are continuous: they are linked via the state roots
                 for i in 0..MAX_AGG_SNARKS - 1 {
                     for j in 0..32 {
                         // sanity check
@@ -279,7 +347,7 @@ pub(crate) fn assign_batch_hashes(
                     }
                 }
 
-                // 2.5 assert hashes use a same chain id
+                // 5 assert hashes use a same chain id
                 for i in 0..MAX_AGG_SNARKS {
                     for j in 0..CHAIN_ID_LEN {
                         // sanity check
@@ -290,16 +358,29 @@ pub(crate) fn assign_batch_hashes(
                         )?;
                     }
                 }
-
-                keccak_config
-                    .keccak_table
-                    .annotate_columns_in_region(&mut region);
-                keccak_config.annotate_circuit(&mut region);
                 Ok(())
             },
         )
         .unwrap();
+    Ok(())
+}
 
+/// Input the hash input bytes,
+/// assign the circuit for the hash function,
+/// return cells of the hash inputs and digests.
+// This function asserts the following constraints on the hashes
+// 1. batch_data_hash digest is reused for public input hash
+// 3. batch_data_hash and chunk[i].pi_hash use a same chunk[i].data_hash when chunk[i] is not padded
+// 6. chunk[i]'s prev_state_root == post_state_root when chunk[i] is padded
+// 7. chunk[i]'s data_hash == [0u8; 32] when chunk[i] is padded
+#[allow(clippy::type_complexity)]
+pub(crate) fn conditional_constraints(
+    flex_gate: &FlexGateConfig<Fr>,
+    layouter: &mut impl Layouter<Fr>,
+    hash_input_cells: &[AssignedCell<Fr, Fr>],
+    hash_output_cells: &[AssignedCell<Fr, Fr>],
+    num_of_valid_chunks: usize,
+) -> Result<(), Error> {
     let mut first_pass = halo2_base::SKIP_FIRST_PASS;
     layouter
         .assign_region(
@@ -330,24 +411,18 @@ pub(crate) fn assign_batch_hashes(
                 assert_eq!(hash_output_cells.len(), (MAX_AGG_SNARKS + 4) * DIGEST_LEN);
 
                 // preimages
-                let batch_pi_hash_preimage = &hash_input_cells[0..ROUND_LEN * 2];
-                let mut chunk_pi_hash_preimages = vec![];
-                for i in 0..MAX_AGG_SNARKS {
-                    chunk_pi_hash_preimages
-                        .push(&hash_input_cells[ROUND_LEN * 2 * (i + 1)..ROUND_LEN * 2 * (i + 2)]);
-                }
-                let potential_batch_data_hash_preimage =
-                    &hash_input_cells[ROUND_LEN * 2 * (MAX_AGG_SNARKS + 1)..];
+                let (
+                    batch_pi_hash_preimage,
+                    chunk_pi_hash_preimages,
+                    potential_batch_data_hash_preimage,
+                ) = parse_hash_preimage_cells(&hash_input_cells);
 
                 // digests
-                let batch_pi_hash_digest = &hash_output_cells[0..DIGEST_LEN];
-                let mut chunk_pi_hash_digests = vec![];
-                for i in 0..MAX_AGG_SNARKS {
-                    chunk_pi_hash_digests
-                        .push(&hash_output_cells[DIGEST_LEN * (i + 1)..DIGEST_LEN * (i + 2)]);
-                }
-                let potential_batch_data_hash_digest =
-                    &hash_output_cells[DIGEST_LEN * (MAX_AGG_SNARKS + 1)..];
+                let (
+                    batch_pi_hash_digest,
+                    chunk_pi_hash_digests,
+                    potential_batch_data_hash_digest
+                ) = parse_hash_digest_cells(&hash_output_cells);
 
                 //
                 // 2.1 batch_data_hash digest is reused for public input hash
@@ -407,14 +482,6 @@ pub(crate) fn assign_batch_hashes(
                             QuantumCell::Existing(t4),
                         );
 
-                        // println!(
-                        //     "{} {} {:?} {:?} {:?}",
-                        //     i,
-                        //     j,
-                        //     t2.value(),
-                        //     t3.value(),
-                        //     t4.value()
-                        // );
                         let t1 = flex_gate.mul(
                             &mut ctx,
                             QuantumCell::Existing(t2),
@@ -452,15 +519,15 @@ pub(crate) fn assign_batch_hashes(
                     .enumerate()
                 {
                     for (j, cell) in chunk.into_iter().enumerate() {
-                        // sanity check
-                        println!(
-                            "{} {} {:?} {:?} {:?}",
-                            i,
-                            j,
-                            cell.value(),
-                            chunk_pi_hash_preimages[i][j + CHUNK_DATA_HASH_INDEX].value(),
-                            chunk_is_valid[i].value()
-                        );
+                        // // sanity check
+                        // println!(
+                        //     "{} {} {:?} {:?} {:?}",
+                        //     i,
+                        //     j,
+                        //     cell.value(),
+                        //     chunk_pi_hash_preimages[i][j + CHUNK_DATA_HASH_INDEX].value(),
+                        //     chunk_is_valid[i].value()
+                        // );
 
                         assert_conditional_equal(
                             cell,
@@ -499,8 +566,7 @@ pub(crate) fn assign_batch_hashes(
             },
         )
         .unwrap();
-
-    Ok((hash_input_cells, hash_output_cells))
+    Ok(())
 }
 
 /// generate a string of binary cells indicating
