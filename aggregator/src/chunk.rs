@@ -3,8 +3,11 @@
 use eth_types::H256;
 use ethers_core::utils::keccak256;
 
-/// Implements a dummy circuit for the chunk
-pub(crate) mod dummy_chunk_circuit;
+/// Implements a mock chunk that simulates a real trace
+#[cfg(test)]
+pub(crate) mod mock_chunk_circuit;
+/// Implements a dummy circuit for the padded chunk
+pub(crate) mod padded_chunk_circuit;
 
 #[derive(Default, Debug, Clone, Copy)]
 /// A chunk is a set of continuous blocks.
@@ -48,8 +51,8 @@ impl ChunkHash {
     }
 
     /// Build a dummy chunk from a real chunk.
-    /// The dummy chunk will act as a consecutive chunk of the real chunk
-    pub(crate) fn dummy_chunk_hash(previous_chunk: &Self) -> Self {
+    /// The padded chunk will act as a consecutive chunk of the real chunk
+    pub(crate) fn padded_chunk_hash(previous_chunk: &Self) -> Self {
         Self {
             chain_id: previous_chunk.chain_id,
             prev_state_root: previous_chunk.post_state_root,
@@ -59,10 +62,10 @@ impl ChunkHash {
         }
     }
 
-    /// A ChunkHash is dummy if its pre_state_root matches its post_state_root
+    /// A ChunkHash is a padding if its pre_state_root matches its post_state_root
     /// and its data_hash is all 0s.
     #[allow(dead_code)]
-    pub(crate) fn is_dummy(&self) -> bool {
+    pub(crate) fn is_padding(&self) -> bool {
         !(self.prev_state_root != self.post_state_root || self.data_hash != [0u8; 32].into())
     }
 

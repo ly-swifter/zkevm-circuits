@@ -16,8 +16,8 @@ use snark_verifier_sdk::{
 };
 
 use crate::{
-    compression_layer_evm, compression_layer_snark, layer_0, tests::mock_chunk::MockChunkCircuit,
-    CompressionCircuit,
+    chunk::mock_chunk_circuit::MockChunkCircuit, compression_layer_evm, compression_layer_snark,
+    layer_0, CompressionCircuit,
 };
 
 #[ignore = "it takes too much time"]

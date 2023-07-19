@@ -1,6 +1,7 @@
 mod aggregation;
 mod compression;
 mod mock_chunk;
+mod padded_chunk;
 mod rlc;
 
 #[macro_export]

@@ -41,10 +41,10 @@ impl BatchHash {
         // pad the chunks with dummy ones
         let mut chunks_with_padding = chunks_without_padding.to_vec();
         if chunks_without_padding.len() != MAX_AGG_SNARKS {
-            let dummy_chunk = ChunkHash::dummy_chunk_hash(chunks_without_padding.last().unwrap()); // Safe unwrap
+            let padded_chunk = ChunkHash::padded_chunk_hash(chunks_without_padding.last().unwrap()); // Safe unwrap
             chunks_with_padding = [
                 chunks_with_padding,
-                vec![dummy_chunk; MAX_AGG_SNARKS - chunks_without_padding.len()],
+                vec![padded_chunk; MAX_AGG_SNARKS - chunks_without_padding.len()],
             ]
             .concat();
         }

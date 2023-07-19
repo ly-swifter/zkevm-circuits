@@ -203,7 +203,7 @@ pub(crate) fn extract_hash_cells(
 
                 let mut preimage_indices_iter = preimage_indices.iter();
                 let mut digest_indices_iter = digest_indices.iter();
-            
+
                 let mut cur_preimage_index = preimage_indices_iter.next();
                 let mut cur_digest_index = digest_indices_iter.next();
 
