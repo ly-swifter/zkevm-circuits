@@ -10,8 +10,9 @@ use crate::{
     aggregation::AggregationCircuit,
     batch::BatchHash,
     chunk::{mock_chunk_circuit::MockChunkCircuit, padded_chunk_circuit::PaddedChunkHashCircuit},
+    compression_layer_snark,
     constants::MAX_AGG_SNARKS,
-    layer_0, ChunkHash,
+    layer_0, ChunkHash, CompressionCircuit,
 };
 
 // #[cfg(feature = "disable_proof_aggregation")]
@@ -74,11 +75,15 @@ fn test_aggregation_circuit_full() {
 }
 
 fn build_new_aggregation_circuit(num_chunks: usize) -> AggregationCircuit {
+    std::env::set_var("COMPRESSION_CONFIG", "./configs/compression_wide.config");
+
     // inner circuit: Mock circuit
     let k0 = 8;
+    let k1 = 23;
 
     let mut rng = test_rng();
-    let params = gen_srs(k0);
+    let params0 = gen_srs(k0);
+    let params1 = gen_srs(k1);
 
     let mut chunks_without_padding = (0..num_chunks)
         .map(|_| ChunkHash::mock_random_chunk_hash_for_testing(&mut rng))
@@ -96,7 +101,10 @@ fn build_new_aggregation_circuit(num_chunks: usize) -> AggregationCircuit {
             .collect_vec();
         circuits
             .iter()
-            .map(|&circuit| layer_0!(circuit, MockChunkCircuit, params, k0, path))
+            .map(|&circuit| {
+                let layer_0_snark = layer_0!(circuit, MockChunkCircuit, params0, k0, path);
+                compression_layer_snark!(layer_0_snark, params1, k1, path, 1)
+            })
             .collect_vec()
     };
 
@@ -106,8 +114,9 @@ fn build_new_aggregation_circuit(num_chunks: usize) -> AggregationCircuit {
     let padded_snarks = {
         let padded_chunk = ChunkHash::padded_chunk_hash(&chunks_without_padding[num_chunks - 1]);
         let circuit = PaddedChunkHashCircuit::new(padded_chunk);
-        let snark = layer_0!(circuit, PaddedChunkHashCircuit, params, k0, path);
-        vec![snark; MAX_AGG_SNARKS - num_chunks]
+        let layer_0_snark = layer_0!(circuit, PaddedChunkHashCircuit, params0, k0, path);
+        let layer_1_snark = compression_layer_snark!(layer_0_snark, params1, k1, path, 1);
+        vec![layer_1_snark; MAX_AGG_SNARKS - num_chunks]
     };
 
     // ==========================
@@ -116,7 +125,7 @@ fn build_new_aggregation_circuit(num_chunks: usize) -> AggregationCircuit {
     let batch_hash = BatchHash::construct(&chunks_without_padding);
 
     AggregationCircuit::new(
-        &params,
+        &params1,
         [real_snarks, padded_snarks].concat().as_ref(),
         rng,
         batch_hash,
