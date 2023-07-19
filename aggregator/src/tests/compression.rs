@@ -57,7 +57,7 @@ fn test_mock_compression() {
         let compression_circuit =
             CompressionCircuit::new(&param, layer_0_snark, true, &mut rng).unwrap();
         let instance = compression_circuit.instances();
-        println!("instance length {:?}", instance.len());
+        println!("instance length {:?}", instance[0].len());
 
         let mock_prover = MockProver::<Fr>::run(k1, &compression_circuit, instance).unwrap();
 

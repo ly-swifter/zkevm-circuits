@@ -4,7 +4,7 @@ use std::fs::File;
 
 use ark_std::{end_timer, start_timer};
 use halo2_proofs::{
-    circuit::{Layouter, SimpleFloorPlanner, Value},
+    circuit::{Cell, Layouter, SimpleFloorPlanner, Value},
     halo2curves::bn256::{Fq, G1Affine},
     plonk::{Circuit, ConstraintSystem, Error},
 };
@@ -107,10 +107,9 @@ impl Circuit<Fr> for CompressionCircuit {
             .expect("load range lookup table");
         #[cfg(feature = "skip_first_pass")]
         let mut first_pass = halo2_base::SKIP_FIRST_PASS;
-        let mut instances = vec![];
-        layouter.assign_region(
+        let instances = layouter.assign_region(
             || "compression circuit",
-            |region| {
+            |region| -> Result<Vec<Cell>, Error> {
                 #[cfg(feature = "skip_first_pass")]
                 if first_pass {
                     first_pass = false;
@@ -124,7 +123,7 @@ impl Circuit<Fr> for CompressionCircuit {
                         fixed_columns: config.gate().constants.clone(),
                     },
                 );
-
+                let mut instances = vec![];
                 let ecc_chip = config.ecc_chip();
                 let loader = Halo2Loader::new(ecc_chip, ctx);
                 let (assigned_instances, acc) = aggregate::<Kzg<Bn256, Bdfg21>>(
@@ -152,7 +151,7 @@ impl Circuit<Fr> for CompressionCircuit {
                 config.range().finalize(&mut loader.ctx_mut());
 
                 loader.ctx_mut().print_stats(&["Range"]);
-                Ok(())
+                Ok(instances)
             },
         )?;
 
