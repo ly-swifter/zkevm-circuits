@@ -3,6 +3,7 @@ mod compression;
 mod mock_chunk;
 mod padded_chunk;
 mod rlc;
+mod test_compression_vk;
 
 #[macro_export]
 macro_rules! layer_0 {

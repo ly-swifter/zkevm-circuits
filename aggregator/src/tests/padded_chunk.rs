@@ -1,11 +1,13 @@
 use std::{fs, path::Path, process};
 
 use ark_std::{end_timer, start_timer, test_rng};
-use halo2_proofs::{poly::commitment::Params, dev::MockProver, halo2curves::bn256::Fr};
+use halo2_proofs::{dev::MockProver, halo2curves::bn256::Fr, poly::commitment::Params};
 use snark_verifier::loader::halo2::halo2_ecc::halo2_base::utils::fs::gen_srs;
 use snark_verifier_sdk::{gen_pk, gen_snark_shplonk, verify_snark_shplonk, CircuitExt};
 
-use crate::{chunk::padded_chunk_circuit::PaddedChunkHashCircuit, layer_0, ChunkHash, CompressionCircuit};
+use crate::{
+    chunk::padded_chunk_circuit::PaddedChunkHashCircuit, layer_0, ChunkHash, CompressionCircuit,
+};
 
 #[test]
 fn test_padded_chunk_prover() {
@@ -26,7 +28,7 @@ fn test_padded_chunk_prover() {
     let k1 = 22;
 
     let mut rng = test_rng();
-    let params = gen_srs(k0);
+    let params = gen_srs(k1);
 
     let real_chunk = ChunkHash::mock_random_chunk_hash_for_testing(&mut rng);
     let pad_chunk = ChunkHash::padded_chunk_hash(&real_chunk);
