@@ -3,7 +3,8 @@ use std::{fs, path::Path, process};
 use ark_std::{end_timer, start_timer, test_rng};
 use halo2_proofs::{
     dev::MockProver,
-    halo2curves::bn256::{Bn256, Fr},
+    halo2curves::bn256::{Bn256, Fr, G1Affine},
+    plonk::VerifyingKey,
     poly::commitment::Params,
 };
 use snark_verifier::{
@@ -16,18 +17,18 @@ use snark_verifier_sdk::{
 };
 
 use crate::{
-    chunk::{mock_chunk_circuit::MockChunkCircuit, padded_chunk_circuit::PaddedChunkHashCircuit}, compression_layer_evm, compression_layer_snark,
-    layer_0, CompressionCircuit, ChunkHash,
+    chunk::{mock_chunk_circuit::MockChunkCircuit, padded_chunk_circuit::PaddedChunkHashCircuit},
+    compression_layer_evm, compression_layer_snark, layer_0, ChunkHash, CompressionCircuit,
 };
 
 #[test]
 fn test_two_layer_proof_compression() {
     env_logger::init();
-    mock_hash_2_layer_proof_compression();
-    padded_hash_2_layer_proof_compression();
+    let invalid_vk = mock_hash_2_layer_proof_compression();
+    padded_hash_2_layer_proof_compression(&invalid_vk);
 }
 
-fn padded_hash_2_layer_proof_compression() {
+fn padded_hash_2_layer_proof_compression(invalid_vk: &VerifyingKey<G1Affine>) {
     if std::path::Path::new("data").is_dir() {
         println!("data folder already exists\n");
     } else {
@@ -51,7 +52,6 @@ fn padded_hash_2_layer_proof_compression() {
     let circuit = PaddedChunkHashCircuit::new(pad_chunk);
     let layer_0_snark = layer_0!(circuit, PaddedChunkHashCircuit, layer_2_params, k0, path);
 
-
     std::env::set_var("COMPRESSION_CONFIG", "./configs/compression_wide.config");
     let layer_1_snark = compression_layer_snark!(layer_0_snark, layer_2_params, k1, path, 1);
 
@@ -71,11 +71,19 @@ fn padded_hash_2_layer_proof_compression() {
     let pk = gen_pk(&param, &compression_circuit, None);
     let vk = pk.get_vk();
     println!("vk: {:?}", vk);
+
+    let snark = gen_snark_shplonk(&param, &pk, circuit, &mut rng, None::<String>);
+    println!(
+        "verify with valid vk: {}",
+        verify_snark_shplonk::<CompressionCircuit>(&param, snark.clone(), vk)
+    );
+    println!(
+        "verify with invalid vk: {}",
+        verify_snark_shplonk::<CompressionCircuit>(&param, snark, invalid_vk)
+    );
 }
 
-
-
-fn mock_hash_2_layer_proof_compression() {
+fn mock_hash_2_layer_proof_compression() -> VerifyingKey<G1Affine> {
     if std::path::Path::new("data").is_dir() {
         println!("data folder already exists\n");
     } else {
@@ -116,4 +124,5 @@ fn mock_hash_2_layer_proof_compression() {
     let pk = gen_pk(&param, &compression_circuit, None);
     let vk = pk.get_vk();
     println!("vk: {:?}", vk);
+    vk.clone()
 }
