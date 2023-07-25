@@ -19,7 +19,7 @@ use crate::{
     },
 };
 use array_init::array_init;
-use eth_types::{evm_types::OpcodeId, Field, U256};
+use eth_types::{evm_types::OpcodeId, Field};
 use halo2_proofs::{circuit::Value, plonk::Error};
 
 #[derive(Clone, Debug)]
@@ -40,13 +40,6 @@ impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
         let is_push0 = IsZeroGadget::construct(cb, opcode.expr() - OpcodeId::PUSH0.expr());
 
         let value = cb.query_word32();
-        cb.stack_push(value.to_word());
-
-        cb.require_zero(
-            "Stack write value must be zero for PUSH0",
-            is_push0.expr() * sum::expr(&value.limbs),
-        );
-
         // Query selectors for each opcode_lookup
         let selectors = array_init(|_| cb.query_bool());
 
@@ -102,7 +95,11 @@ impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
             num_additional_pushed,
         );
 
+        // Push the value on the stack
+        cb.stack_push(value.to_word());
+
         // State transition
+        // `program_counter` needs to be increased by number of bytes pushed + 1
         let step_state_transition = StepStateTransition {
             rw_counter: Delta(1.expr()),
             program_counter: Delta(opcode.expr() - (OpcodeId::PUSH0.as_u64() - 1).expr()),
@@ -142,11 +139,7 @@ impl<F: Field> ExecutionGadget<F> for PushGadget<F> {
             F::from(opcode.as_u64()) - F::from(OpcodeId::PUSH0.as_u64()),
         )?;
 
-        let value = if opcode.is_push_with_data() {
-            block.get_rws(step, 0).stack_value()
-        } else {
-            U256::zero()
-        };
+        let value = block.get_rws(step, 0).stack_value();
         self.value.assign_u256(region, offset, value)?;
 
         let num_additional_pushed = opcode.postfix().expect("opcode with postfix");
