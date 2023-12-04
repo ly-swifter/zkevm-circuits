@@ -33,7 +33,6 @@ serde_json.workspace = true
 
 hash-circuit.workspace = true
 misc-precompiled-circuit = { package = "misc-precompiled-circuit", git = "https://github.com/scroll-tech/misc-precompiled-circuit.git", tag = "v0.1.0" }
-
 halo2-base = { git = "https://github.com/scroll-tech/halo2-lib", tag = "v0.1.5", default-features=false, features=["halo2-pse","display"] }
 halo2-ecc = { git = "https://github.com/scroll-tech/halo2-lib", tag = "v0.1.5", default-features=false, features=["halo2-pse","display"] }
 
@@ -73,3 +72,7 @@ poseidon-codehash = []
 parallel_syn = ["hash-circuit/parallel_syn", "halo2_proofs/parallel_syn"]
 
 debug-annotations = []
+
+[patch."https://github.com/scroll-tech/misc-precompiled-circuit.git"]
+misc-precompiled-circuit = { package = "misc-precompiled-circuit", path = "../../misc-precompiled-circuit" }
+
